@@ -1,0 +1,14 @@
+# Visual Studio / VS Code
+.vs/
+.vscode/
+*.user
+*.suo
+
+# Build artifacts (uncomment if you prefer not tracking binaries)
+# *.exe
+*.pdb
+
+# Local caches & OS files
+Thumbs.db
+Desktop.ini
+*.log
