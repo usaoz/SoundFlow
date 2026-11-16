@@ -21,6 +21,7 @@ namespace SoundFlow
         private readonly string _deviceConfigPath;
         private bool _isWindowActive = false;
         private string _defaultDeviceId = null;
+        private List<string> _allActiveDeviceIds = new List<string>();
 
         public BindingList<AudioDeviceItem> Devices { get; private set; }
         public BindingList<AudioSessionItem> Sessions { get; private set; }
@@ -444,6 +445,7 @@ namespace SoundFlow
                 }
 
                 // Remove unplugged devices
+                _allActiveDeviceIds = new List<string>(foundIds);
                 for (int i = Devices.Count - 1; i >= 0; i--)
                 {
                     if (!foundIds.Contains(Devices[i].Id))
@@ -516,8 +518,8 @@ namespace SoundFlow
                 var IID_IAudioSessionManager2 = new Guid("77AA99A0-1BD6-484F-8BC7-2C654C9A9B6F");
                 var rawList = new List<RawSessionInfo>();
 
-                // Scan all audio devices
-                foreach (var device in Devices)
+                // Scan all active audio endpoints (including deduplicated ones)
+                foreach (var deviceId in _allActiveDeviceIds)
                 {
                     IMMDevice dev = null;
                     object mgrObj = null;
@@ -526,7 +528,7 @@ namespace SoundFlow
 
                     try
                     {
-                        _deviceEnumerator.GetDevice(device.Id, out dev);
+                        _deviceEnumerator.GetDevice(deviceId, out dev);
                         if (dev == null) continue;
 
                         int hr = dev.Activate(ref IID_IAudioSessionManager2, 1, IntPtr.Zero, out mgrObj);
@@ -631,8 +633,8 @@ namespace SoundFlow
                                 rawList.Add(new RawSessionInfo
                                 {
                                     Pid = pid,
-                                    DeviceId = device.Id,
-                                    IsDeviceHidden = device.IsHidden,
+                                    DeviceId = deviceId,
+                                    IsDeviceHidden = false,
                                     ProcName = procName,
                                     ExePath = exePath,
                                     DisplayName = displayName,
