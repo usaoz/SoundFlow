@@ -597,10 +597,11 @@ namespace SoundFlow
 
                                 if (string.IsNullOrEmpty(procName)) continue;
 
-                                // Filter out system audio services and unwanted system monitors
+                                // Filter out system audio services and unwanted system/overlay monitors
                                 if (procName.Equals("audiodg", StringComparison.OrdinalIgnoreCase) ||
                                     procName.Equals("system", StringComparison.OrdinalIgnoreCase) ||
-                                    procName.Equals("SystemSounds", StringComparison.OrdinalIgnoreCase))
+                                    procName.Equals("SystemSounds", StringComparison.OrdinalIgnoreCase) ||
+                                    procName.StartsWith("EOSOverlayRenderer", StringComparison.OrdinalIgnoreCase))
                                 {
                                     continue;
                                 }
