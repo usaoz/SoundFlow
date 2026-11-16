@@ -272,6 +272,49 @@ namespace SoundFlow
 
         public const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
 
+        [StructLayout(LayoutKind.Sequential)]
+        public struct PROCESS_BASIC_INFORMATION
+        {
+            public IntPtr ExitStatus;
+            public IntPtr PebBaseAddress;
+            public IntPtr AffinityMask;
+            public IntPtr BasePriority;
+            public IntPtr UniqueProcessId;
+            public IntPtr InheritedFromUniqueProcessId;
+        }
+
+        [DllImport("ntdll.dll")]
+        public static extern int NtQueryInformationProcess(
+            IntPtr processHandle,
+            int processInformationClass,
+            ref PROCESS_BASIC_INFORMATION processInformation,
+            int processInformationLength,
+            out int returnLength);
+
+        public static int GetParentProcessId(int pid)
+        {
+            if (pid <= 0) return 0;
+            IntPtr hProcess = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
+            if (hProcess == IntPtr.Zero) return 0;
+
+            try
+            {
+                PROCESS_BASIC_INFORMATION pbi = new PROCESS_BASIC_INFORMATION();
+                int retLen;
+                int status = NtQueryInformationProcess(hProcess, 0, ref pbi, Marshal.SizeOf(typeof(PROCESS_BASIC_INFORMATION)), out retLen);
+                if (status == 0)
+                {
+                    return pbi.InheritedFromUniqueProcessId.ToInt32();
+                }
+            }
+            catch { }
+            finally
+            {
+                CloseHandle(hProcess);
+            }
+            return 0;
+        }
+
         public static string GetProcessPathSafe(int pid)
         {
             if (pid <= 0) return null;

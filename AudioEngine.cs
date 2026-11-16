@@ -182,6 +182,16 @@ namespace SoundFlow
                 categoryTag = "AURICULAR";
                 cleanName = ExtractSimplifiedName(raw);
             }
+            else if (lower.Contains("spdif") || lower.Contains("digital output") || lower.Contains("salida digital"))
+            {
+                categoryTag = "AUDIO";
+                cleanName = raw.Trim();
+            }
+            else if (lower.Contains("steam streaming microphone"))
+            {
+                categoryTag = "AUDIO";
+                cleanName = "Steam Streaming Mic";
+            }
             else if (lower.Contains("steam") || lower.Contains("streaming") || lower.Contains("broadcast"))
             {
                 categoryTag = "STREAMING";
@@ -204,6 +214,18 @@ namespace SoundFlow
             }
 
             fullName = string.Format("[{0}] {1}", categoryTag, cleanName);
+        }
+
+        private static bool ShouldAutoHideDevice(string rawName)
+        {
+            if (string.IsNullOrEmpty(rawName)) return false;
+            string lower = rawName.ToLowerInvariant();
+            return lower.Contains("spdif") ||
+                   lower.Contains("digital output") ||
+                   lower.Contains("salida digital") ||
+                   lower.Contains("steam streaming microphone") ||
+                   lower.Contains("amd high definition audio") ||
+                   lower.Contains("nvidia high definition audio");
         }
 
         private static string DetectCategory(string text)
@@ -335,6 +357,7 @@ namespace SoundFlow
                 _defaultDeviceId = defaultDevId;
 
                 var foundIds = new HashSet<string>();
+                bool configsDirty = false;
 
                 for (int i = 0; i < count; i++)
                 {
@@ -389,9 +412,25 @@ namespace SoundFlow
                         {
                             int maxOrder = 0;
                             foreach (var c in _deviceConfigs.Values) { if (c.Order > maxOrder) maxOrder = c.Order; }
-                            cfg = new DeviceConfig { Id = id, IsHidden = false, Order = maxOrder + 10, CustomName = "" };
+                            cfg = new DeviceConfig { Id = id, IsHidden = ShouldAutoHideDevice(name), Order = maxOrder + 10, CustomName = "" };
                             _deviceConfigs[id] = cfg;
-                            SaveDeviceConfigs();
+                            configsDirty = true;
+                        }
+                        else
+                        {
+                            if (ShouldAutoHideDevice(name) && string.IsNullOrEmpty(cfg.CustomName) && !cfg.IsHidden)
+                            {
+                                cfg.IsHidden = true;
+                                configsDirty = true;
+                            }
+                            if ((id.Equals("{0.0.0.00000000}.{f2026e5f-9e9a-42f7-9f7c-7ff4c45595d3}", StringComparison.OrdinalIgnoreCase) ||
+                                 id.Equals("{0.0.0.00000000}.{c8324e22-0979-40e4-8ebf-b2d048a1b42a}", StringComparison.OrdinalIgnoreCase) ||
+                                 id.Equals("{0.0.0.00000000}.{bb9388cc-0ea8-4dce-bbb5-4b1a0df11b51}", StringComparison.OrdinalIgnoreCase)) &&
+                                cfg.IsHidden)
+                            {
+                                cfg.IsHidden = false;
+                                configsDirty = true;
+                            }
                         }
 
                         string catTag, cleanName, fullName;
@@ -444,6 +483,8 @@ namespace SoundFlow
                     }
                 }
 
+                if (configsDirty) SaveDeviceConfigs();
+
                 // Remove unplugged devices
                 _allActiveDeviceIds = new List<string>(foundIds);
                 for (int i = Devices.Count - 1; i >= 0; i--)
@@ -451,32 +492,6 @@ namespace SoundFlow
                     if (!foundIds.Contains(Devices[i].Id))
                     {
                         Devices.RemoveAt(i);
-                    }
-                }
-
-                // Deduplicate devices with the same formatted Name, preferring the default device
-                var seenNames = new Dictionary<string, AudioDeviceItem>(StringComparer.OrdinalIgnoreCase);
-                for (int i = 0; i < Devices.Count; i++)
-                {
-                    var d = Devices[i];
-                    AudioDeviceItem existingByName;
-                    if (seenNames.TryGetValue(d.Name, out existingByName))
-                    {
-                        if (d.IsDefault && !existingByName.IsDefault)
-                        {
-                            Devices.Remove(existingByName);
-                            seenNames[d.Name] = d;
-                            i--;
-                        }
-                        else
-                        {
-                            Devices.RemoveAt(i);
-                            i--;
-                        }
-                    }
-                    else
-                    {
-                        seenNames[d.Name] = d;
                     }
                 }
 
@@ -497,6 +512,7 @@ namespace SoundFlow
         private class RawSessionInfo
         {
             public uint Pid;
+            public int HostPid;
             public string DeviceId;
             public bool IsDeviceHidden;
             public string ProcName;
@@ -606,9 +622,69 @@ namespace SoundFlow
                                     continue;
                                 }
 
+                                int hostPid = 0;
+                                if (procName.Equals("msedgewebview2", StringComparison.OrdinalIgnoreCase))
+                                {
+                                    int curPid = (int)pid;
+                                    Process resolvedHost = null;
+                                    for (int hop = 0; hop < 6; hop++)
+                                    {
+                                        int parentPid = Win32.GetParentProcessId(curPid);
+                                        if (parentPid <= 0 || parentPid == curPid) break;
+
+                                        Process parentProc = null;
+                                        try
+                                        {
+                                            parentProc = Process.GetProcessById(parentPid);
+                                            if (parentProc.HasExited) parentProc = null;
+                                        }
+                                        catch
+                                        {
+                                            parentProc = null;
+                                        }
+
+                                        if (parentProc == null) break;
+
+                                        string parentName = parentProc.ProcessName ?? "";
+                                        if (parentName.Equals("msedgewebview2", StringComparison.OrdinalIgnoreCase))
+                                        {
+                                            curPid = parentPid;
+                                            continue;
+                                        }
+
+                                        string pLower = parentName.ToLowerInvariant();
+                                        if (pLower == "explorer" || pLower == "searchhost" || pLower == "widgets" ||
+                                            pLower == "shellexperiencehost" || pLower == "startmenuexperiencehost" ||
+                                            pLower == "lockapp" || pLower == "svchost" || pLower == "sihost")
+                                        {
+                                            resolvedHost = null;
+                                        }
+                                        else
+                                        {
+                                            resolvedHost = parentProc;
+                                        }
+                                        break;
+                                    }
+
+                                    if (resolvedHost == null)
+                                    {
+                                        continue;
+                                    }
+
+                                    hostPid = resolvedHost.Id;
+                                    procName = resolvedHost.ProcessName;
+                                    string hostExe = "";
+                                    try { hostExe = Win32.GetProcessPathSafe(hostPid); } catch { }
+                                    if (string.IsNullOrEmpty(hostExe))
+                                    {
+                                        try { hostExe = resolvedHost.MainModule.FileName; } catch { }
+                                    }
+                                    if (!string.IsNullOrEmpty(hostExe)) exePath = hostExe;
+                                }
+
                                 string displayName = "";
                                 ctl2.GetDisplayName(out displayName);
-                                if (string.IsNullOrEmpty(displayName) || displayName.StartsWith("@"))
+                                if (hostPid > 0 || string.IsNullOrEmpty(displayName) || displayName.StartsWith("@"))
                                 {
                                     displayName = FormatDisplayName(procName);
                                 }
@@ -631,11 +707,35 @@ namespace SoundFlow
                                 var meter = ctl as IAudioMeterInformation;
                                 string routedDevId = AudioPolicyManager.GetProcessAudioEndpoint((int)pid);
 
+                                DeviceConfig routedCfg;
+                                if (!string.IsNullOrEmpty(routedDevId) && _deviceConfigs.TryGetValue(routedDevId, out routedCfg) && routedCfg.IsHidden)
+                                {
+                                    if (routedDevId.Equals("{0.0.0.00000000}.{11cd8290-065a-4d3d-9eea-f5031ebc5e60}", StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        string analogSpeakersId = "{0.0.0.00000000}.{f2026e5f-9e9a-42f7-9f7c-7ff4c45595d3}";
+                                        try { AudioPolicyManager.SetProcessAudioEndpoint((int)pid, analogSpeakersId); } catch { }
+                                        routedDevId = analogSpeakersId;
+                                    }
+                                    else
+                                    {
+                                        try { AudioPolicyManager.SetProcessAudioEndpoint((int)pid, null); } catch { }
+                                        routedDevId = null;
+                                    }
+                                }
+
+                                bool isDevHidden = false;
+                                DeviceConfig devCfg;
+                                if (_deviceConfigs.TryGetValue(deviceId, out devCfg))
+                                {
+                                    isDevHidden = devCfg.IsHidden;
+                                }
+
                                 rawList.Add(new RawSessionInfo
                                 {
                                     Pid = pid,
+                                    HostPid = hostPid,
                                     DeviceId = deviceId,
-                                    IsDeviceHidden = false,
+                                    IsDeviceHidden = isDevHidden,
                                     ProcName = procName,
                                     ExePath = exePath,
                                     DisplayName = displayName,
@@ -762,6 +862,11 @@ namespace SoundFlow
                         {
                             pidSet.Add((int)s.Pid);
                             allPids.Add((int)s.Pid);
+                        }
+                        if (s.HostPid > 0 && !pidSet.Contains(s.HostPid))
+                        {
+                            pidSet.Add(s.HostPid);
+                            allPids.Add(s.HostPid);
                         }
                     }
 
@@ -1042,6 +1147,39 @@ namespace SoundFlow
             {
                 if (!string.IsNullOrEmpty(exePath) && File.Exists(exePath))
                 {
+                    string exeDir = Path.GetDirectoryName(exePath);
+                    if (!string.IsNullOrEmpty(exeDir))
+                    {
+                        string assetsDir = Path.Combine(exeDir, "Assets");
+                        if (Directory.Exists(assetsDir))
+                        {
+                            string[] candidates = new string[]
+                            {
+                                "AppList.targetsize-24_altform-unplated.png",
+                                "AppList.targetsize-24.png",
+                                "AppList.scale-200.png"
+                            };
+                            foreach (string fileName in candidates)
+                            {
+                                string candidatePath = Path.Combine(assetsDir, fileName);
+                                if (File.Exists(candidatePath))
+                                {
+                                    using (var srcImg = Image.FromFile(candidatePath))
+                                    {
+                                        var bmp = new Bitmap(24, 24);
+                                        using (var g = Graphics.FromImage(bmp))
+                                        {
+                                            g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                                            g.DrawImage(srcImg, new Rectangle(0, 0, 24, 24));
+                                        }
+                                        _iconCache[cacheKey] = bmp;
+                                        return bmp;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     using (Icon sysIcon = Icon.ExtractAssociatedIcon(exePath))
                     {
                         if (sysIcon != null)
@@ -1112,6 +1250,7 @@ namespace SoundFlow
             if (lower == "cs2") return "Counter-Strike 2";
             if (lower == "valorant") return "Valorant";
             if (lower == "obs64") return "OBS Studio";
+            if (lower.StartsWith("whatsapp")) return "WhatsApp";
 
             if (procName.Length > 1)
             {
