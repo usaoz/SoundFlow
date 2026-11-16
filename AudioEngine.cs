@@ -452,6 +452,32 @@ namespace SoundFlow
                     }
                 }
 
+                // Deduplicate devices with the same formatted Name, preferring the default device
+                var seenNames = new Dictionary<string, AudioDeviceItem>(StringComparer.OrdinalIgnoreCase);
+                for (int i = 0; i < Devices.Count; i++)
+                {
+                    var d = Devices[i];
+                    AudioDeviceItem existingByName;
+                    if (seenNames.TryGetValue(d.Name, out existingByName))
+                    {
+                        if (d.IsDefault && !existingByName.IsDefault)
+                        {
+                            Devices.Remove(existingByName);
+                            seenNames[d.Name] = d;
+                            i--;
+                        }
+                        else
+                        {
+                            Devices.RemoveAt(i);
+                            i--;
+                        }
+                    }
+                    else
+                    {
+                        seenNames[d.Name] = d;
+                    }
+                }
+
                 SortDevices();
                 if (OnDevicesUpdated != null) OnDevicesUpdated();
             }
